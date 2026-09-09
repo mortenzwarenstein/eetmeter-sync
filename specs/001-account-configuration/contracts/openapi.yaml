@@ -1,0 +1,276 @@
+openapi: 3.1.0
+info:
+  title: eetmeter-sync — Account Configuration API
+  version: 0.1.0
+  description: >
+    The HTTP/JSON interface is the only way into eetmeter-sync (constitution
+    Principle I). This contract covers feature 001: configuring Eetmeter accounts
+    for an operator and verifying them. No endpoint here ever returns an account
+    secret (FR-006). All paths except `/healthz` require a bearer token that maps
+    to an operator (research D6).
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local / loopback (plain HTTP permitted only on loopback)
+  - url: https://{host}
+    description: Deployed (TLS required)
+    variables:
+      host:
+        default: eetmeter-sync.example
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+  - name: accounts
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                required: [status]
+
+  /v1/accounts:
+    get:
+      tags: [accounts]
+      summary: List the calling operator's configured accounts
+      description: One entry per account, with status and timestamps, never a secret (FR-010, SC-008).
+      responses:
+        "200":
+          description: The account list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Account" }
+                required: [accounts]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    post:
+      tags: [accounts]
+      summary: Add an account and verify it
+      description: >
+        Registers a new account for the operator and immediately verifies it
+        (FR-008). Responds 201 with the resulting account (including a failure
+        status if verification failed — a failed verification is not an HTTP
+        error). Runtime additions do not survive a restart (spec Q4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountCreate" }
+      responses:
+        "201":
+          description: Account created; body reflects the post-verification state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/accounts/{label}:
+    parameters:
+      - $ref: "#/components/parameters/Label"
+    get:
+      tags: [accounts]
+      summary: Get one account
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [accounts]
+      summary: Update an account
+      description: >
+        Updates any of login, secret, or deviceId for an existing account. If the
+        secret changes, the account is re-verified automatically (FR-008). A
+        rename via `newLabel` that collides is rejected (FR-017). Session-only
+        (spec Q4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountUpdate" }
+      responses:
+        "200":
+          description: Updated account; body reflects any re-verification.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    delete:
+      tags: [accounts]
+      summary: Remove an account
+      description: >
+        Deletes the account, its stored ciphertext, and its status row (spec
+        US4). If the same label is also in the start-up configuration it returns
+        on the next restart (spec Q4). Idempotent.
+      responses:
+        "204": { description: Removed (or was already absent). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/accounts/{label}/verify:
+    parameters:
+      - $ref: "#/components/parameters/Label"
+    post:
+      tags: [accounts]
+      summary: Re-verify one account on demand (FR-009)
+      responses:
+        "200":
+          description: Verification ran; body is the resulting account state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/accounts/verify:
+    post:
+      tags: [accounts]
+      summary: Re-verify all of the operator's accounts on demand (FR-009)
+      responses:
+        "200":
+          description: Verification ran for every account.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Account" }
+                required: [accounts]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        `Authorization: Bearer <token>`. The token is one of the
+        `operatorId:token` pairs in `EETMETER_SYNC_API_TOKENS` and selects the
+        operator context. Failed attempts are rate-limited per client IP.
+
+  parameters:
+    Label:
+      name: label
+      in: path
+      required: true
+      description: The account label, unique within the operator's set.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{1,64}$"
+
+  schemas:
+    Status:
+      type: string
+      enum: [never_verified, connected, credentials_rejected, temporarily_unavailable]
+    FailureCategory:
+      type: [string, "null"]
+      enum: [credentials_rejected, service_unavailable, null]
+    ConfigSource:
+      type: string
+      enum: [runtime, env, file, default]
+
+    Account:
+      type: object
+      description: An account as returned by the API. Never includes the secret.
+      properties:
+        label: { type: string }
+        login: { type: string, description: "Eetmeter login identifier (e-mail)." }
+        secretSet: { type: boolean, description: "True when a secret is stored (FR-006)." }
+        secretUpdatedAt: { type: [string, "null"], format: date-time }
+        deviceIdSet: { type: boolean }
+        configSource: { $ref: "#/components/schemas/ConfigSource" }
+        status: { $ref: "#/components/schemas/Status" }
+        failureCategory: { $ref: "#/components/schemas/FailureCategory" }
+        lastAuthenticatedAt: { type: [string, "null"], format: date-time }
+        lastCheckedAt: { type: [string, "null"], format: date-time }
+        detail:
+          type: string
+          description: Short, non-sensitive note about the last verification. Never contains a secret, token, or personal data.
+      required:
+        [label, login, secretSet, deviceIdSet, configSource, status,
+         failureCategory, lastAuthenticatedAt, lastCheckedAt]
+      additionalProperties: false
+
+    AccountCreate:
+      type: object
+      properties:
+        label: { type: string, pattern: "^[A-Za-z0-9._-]{1,64}$" }
+        login: { type: string, minLength: 1 }
+        secret: { type: string, minLength: 1, writeOnly: true }
+        deviceId: { type: string, description: "Optional; derived deterministically if omitted." }
+      required: [label, login, secret]
+      additionalProperties: false
+
+    AccountUpdate:
+      type: object
+      description: At least one field must be present.
+      properties:
+        newLabel: { type: string, pattern: "^[A-Za-z0-9._-]{1,64}$" }
+        login: { type: string, minLength: 1 }
+        secret: { type: string, minLength: 1, writeOnly: true }
+        deviceId: { type: string }
+      additionalProperties: false
+
+    Problem:
+      description: RFC 9457-style problem detail. Bodies never contain a secret.
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+      required: [title, status]
+
+  responses:
+    BadRequest:
+      description: Malformed request body.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    NotFound:
+      description: No such account for this operator.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    Conflict:
+      description: Label or login identifier already in use within the operator's set (FR-017).
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    Unprocessable:
+      description: Validation failed (empty field, bad label charset, etc. — FR-015).
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    TooManyRequests:
+      description: Per-account pacing or auth rate limit hit (FR-018, research D7).
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }

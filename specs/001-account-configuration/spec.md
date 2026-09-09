@@ -8,6 +8,16 @@
 
 **Input**: User description: "eetmeter-sync: let's first make the spec about the base; Fetch the accounts that are supplied, make sure there is a way to configure these accounts"
 
+## Clarifications
+
+### Session 2026-09-09
+
+- Q: Are healthy accounts re-verified on a schedule, and are failed accounts retried automatically? → A: No. Verification is event-driven only — on configure, on secret change, on an operator's on-demand re-check, and when Eetmeter refuses a previously accepted session. Any failure is recorded immediately with its cause category and stays in that state until the operator updates the secret or requests a re-check; there is no background scheduler and no automatic retry loop.
+- Q: When an add or rename would reuse a label already in the operator's set, does the system reject or accept-and-flag? → A: Reject the write outright with a clear, non-sensitive error; the existing account is untouched and no second account is created.
+- Q: When a second account would use an Eetmeter login identifier already configured under another label, reject or flag? → A: Reject it, the same way a duplicate label is rejected. The login identifier is unique within an operator's set. No "duplicate login" state exists.
+- Q: On restart, when a start-up config source still describes an account that was changed or deleted at runtime, which wins? → A: Start-up config wins. On every boot the account set is rebuilt from the start-up configuration sources (deployment environment / config file); runtime add/update/remove changes made since the last start are discarded. Runtime changes are session-only — they exist so no restart is needed (FR-003) — and only verification status is persisted across restarts.
+- Q: Does "verify" mean the auth call alone, or auth plus an authenticated read-back? → A: Auth call plus one authenticated read-back. The system authenticates to obtain a session, then uses that session to retrieve the account/profile record; both must succeed for "connected". Two Eetmeter contracts are recorded and tested against fixtures.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Configure and verify the first account (Priority: P1)
@@ -72,7 +82,8 @@ made.
 3. **Given** an account is defined both in deployment configuration and changed
    later through a live update, **When** the operator inspects the account,
    **Then** the live update is the value in effect and the system can report
-   which source supplied it.
+   which source supplied it — until the next restart, after which the deployment
+   configuration value is in effect again.
 
 ---
 
@@ -87,8 +98,8 @@ Recovering without a restart or a support request is important, but it builds on
 the P1 ability to configure and verify.
 
 **Independent Test**: Put an account into "credentials rejected" state, update its
-secret to the correct value, and confirm the account returns to "connected"
-within one verification cycle with no restart.
+secret to the correct value, and confirm the account returns to "connected" via
+the automatic re-verification that the secret update triggers, with no restart.
 
 **Acceptance Scenarios**:
 
@@ -122,8 +133,10 @@ it disappears from the list and its stored secret is unrecoverable.
    **Then** each account shows its label, status, last successful authentication
    time, last check time, and last failure category (if any) — and no secret.
 2. **Given** an account is configured, **When** the operator removes it, **Then**
-   the account's configuration and stored secret are deleted and it no longer
-   appears anywhere in the system's account views.
+   the account and its stored secret are dropped from the running process and it
+   no longer appears anywhere in the system's account views. (If the account also
+   exists in the start-up configuration, it returns on the next restart — a
+   durable removal is a start-up configuration change.)
 3. **Given** any set of configured accounts, **When** the operator requests an
    on-demand re-check of one account or of all accounts, **Then** the system
    re-verifies the requested account(s) and updates their status and timestamps.
@@ -134,10 +147,11 @@ it disappears from the list and its stored secret is unrecoverable.
 
 - **Eetmeter unreachable or slow during verification**: the account is recorded
   as "temporarily unavailable" (a transient failure), not "credentials
-  rejected", and is retried later with increasing back-off.
+  rejected", and stays in that state until the operator re-checks it or updates
+  its secret; the system does not retry automatically.
 - **Same Eetmeter account configured twice** (same login identifier under two
-  labels): the system flags the duplicate rather than silently maintaining two
-  copies.
+  labels): the system rejects the second account with a clear, non-sensitive
+  error rather than maintaining two copies; the first account is unaffected.
 - **Encryption key absent or changed at startup**: the system cannot read stored
   secrets; it reports a clear error and refuses to start, and it does not delete
   or overwrite the stored data.
@@ -167,24 +181,39 @@ it disappears from the list and its stored secret is unrecoverable.
   configuration source (deployment environment or configuration file) so that a
   freshly deployed instance has its accounts without any manual follow-up step.
 - **FR-003**: The system MUST allow operators to add, update, and remove account
-  configurations while the system is running, without requiring a restart.
-- **FR-004**: When the same account is supplied by more than one configuration
-  source, the system MUST resolve the conflict by a defined precedence —
-  runtime change over deployment environment over configuration file over
-  built-in default — and MUST be able to report which source supplied the value
-  currently in effect.
-- **FR-005**: The system MUST store every account secret encrypted at rest. The
-  encryption key MUST come from outside the stored data (deployment environment
-  or a key service) and MUST NOT be written alongside the encrypted data or into
-  the system's own persistent storage.
+  configurations while the system is running, without requiring a restart. These
+  runtime changes take effect immediately for the running process but are
+  session-only: they are not persisted independently of the start-up
+  configuration, and a restart rebuilds the account set from the start-up
+  configuration sources (see FR-004 and FR-016).
+- **FR-004**: Within a running session, a runtime change to an account MUST take
+  precedence over any value from the start-up configuration sources, and the
+  system MUST be able to report which source supplied the value currently in
+  effect. Across a restart, the start-up configuration sources are authoritative
+  and any prior runtime change is discarded; precedence among the start-up
+  sources is deployment environment over configuration file over built-in
+  default.
+- **FR-005**: Every account secret MUST be protected by authenticated encryption
+  whenever the system holds it outside the start-up configuration source. In this
+  feature the secret is never written to persistent storage (see FR-016 and the
+  Assumptions); it exists only as ciphertext in the running process and is
+  decrypted solely for an Eetmeter authentication call. The encryption key MUST
+  come from outside any stored data (deployment environment or a key service) and
+  MUST NOT be written to persistent storage, a configuration file, or the
+  repository. Any future feature that persists a runtime-supplied secret MUST
+  store only that ciphertext, under the same key rule.
 - **FR-006**: The system MUST NOT reveal a stored secret in any interface
   response, log entry, error message, metric, or diagnostic output. Where a
   secret must be referred to, only a non-reversible indicator is exposed (for
   example: secret set / not set, and when it was last updated).
 - **FR-007**: For each configured account, the system MUST verify the supplied
-  credentials by authenticating with Eetmeter and retrieving the account, and
-  MUST record the result (success, or failure with a cause category) together
-  with the time the check was made.
+  credentials in two steps: (1) authenticate with Eetmeter to obtain a session,
+  then (2) use that session to perform one lightweight authenticated read that
+  confirms the session works and the account is reachable (the recorded fixtures
+  define the exact endpoint — see plan.md and research.md Decision 2). Both steps
+  MUST succeed for the account to be "connected". The system MUST record the
+  result (success, or failure with a cause category) together with the time the
+  check was made.
 - **FR-008**: The system MUST verify an account automatically when it is first
   configured and again whenever that account's credentials change.
 - **FR-009**: Operators MUST be able to trigger re-verification on demand, for a
@@ -196,9 +225,11 @@ it disappears from the list and its stored secret is unrecoverable.
 - **FR-011**: On a failed verification, the system MUST classify the cause at
   least as "credentials rejected" versus "service unavailable / transient", so
   the operator knows whether to correct credentials or to wait.
-- **FR-012**: The system MUST limit how often it attempts authentication for a
-  given account and MUST apply increasing back-off after repeated failures,
-  rather than retrying immediately or continuously.
+- **FR-012**: The system MUST NOT automatically retry a failed verification: an
+  account that fails verification stays in its recorded failure state until the
+  operator updates its secret or requests an on-demand re-check. The system MUST
+  pace authentication attempts for a given account so that repeated
+  operator-triggered re-checks are not all issued to Eetmeter at once.
 - **FR-013**: When a previously accepted session is no longer accepted by
   Eetmeter, the system MUST treat the account as needing re-authentication and
   MUST attempt to re-authenticate from the stored credentials before reporting a
@@ -210,13 +241,22 @@ it disappears from the list and its stored secret is unrecoverable.
   or changed, and MUST reject an invalid account with a clear, non-sensitive
   error (identifying the account and the problem) without emitting the secret and
   without disturbing already-valid accounts.
-- **FR-016**: The system MUST persist account configuration and the latest
-  verification status across restarts, so that credentials do not need to be
-  re-entered (given the out-of-band encryption key is provided again).
+- **FR-016**: The system MUST persist each account's latest verification status
+  (status, cause category, and timestamps) in its state store so it is restored
+  on restart rather than reset to "never verified". Account configuration itself
+  (labels, login identifiers, secrets, device identifiers) is NOT persisted: it
+  is rebuilt from the start-up configuration sources on every start, which are
+  authoritative. The out-of-band encryption key MUST be supplied again at every
+  start so the service can encrypt the secrets it reads from the start-up source;
+  if the key is absent or invalid the service refuses to start.
 - **FR-017**: Each account MUST have a label that is unique within its operator's
-  set, so accounts can be referred to unambiguously; the system MUST reject or
-  flag a second account that reuses a label, and MUST flag when two labels point
-  at the same Eetmeter login identifier.
+  set, so accounts can be referred to unambiguously. The system MUST reject an
+  add or rename that would reuse a label already present in that operator's set,
+  with a clear, non-sensitive error, leaving the existing account untouched and
+  creating no second account. The system MUST likewise reject an add or update
+  that would give a second account an Eetmeter login identifier already used by
+  another of that operator's accounts: the login identifier is unique within an
+  operator's set.
 - **FR-018**: The system MUST behave as a considerate client of Eetmeter during
   all of the above: only the requests needed to authenticate and retrieve the
   account are made, and repeated failures MUST NOT translate into sustained
@@ -229,11 +269,12 @@ it disappears from the list and its stored secret is unrecoverable.
   status belong to a specific operator so that additional operators can be added
   later without restructuring.
 - **Eetmeter Account**: a configured connection to a single Mijn Eetmeter
-  account. Attributes: label (unique per operator), account login identifier,
-  secret (stored encrypted, never returned), device identifier, the
-  configuration source currently in effect, connection status, time of last
-  successful authentication, time of last verification attempt, and last failure
-  category (if any).
+  account. Attributes: label (unique per operator), account login identifier
+  (also unique per operator), secret (held only as in-memory ciphertext, never
+  persisted, never returned), device identifier, the configuration source
+  currently in effect, connection status, time of last successful
+  authentication, time of last verification attempt, and last failure category
+  (if any).
 - **Verification Result**: the outcome of one attempt to authenticate an account
   with Eetmeter — status reached, cause category on failure, and timestamp. The
   most recent result is always available per account; earlier results MAY be
@@ -256,15 +297,17 @@ it disappears from the list and its stored secret is unrecoverable.
   which account failed and that the cause is rejected credentials (not a
   transient error) with no outside help, in 100% of cases.
 - **SC-005**: After an operator corrects the secret of a rejected account, the
-  account returns to "connected" within one verification cycle and with no
-  service restart.
-- **SC-006**: Account configuration and status survive a service restart with no
-  re-entry of credentials in 100% of cases, provided the out-of-band encryption
-  key is supplied again.
-- **SC-007**: When one account fails authentication repeatedly, the system makes
-  no more than a small, bounded, backed-off number of attempts against Eetmeter
-  in the following 10 minutes (target: 6 or fewer), rather than a continuous
-  stream.
+  automatic re-verification triggered by that update returns the account to
+  "connected" with no service restart.
+- **SC-006**: A service restart re-establishes every account present in the
+  start-up configuration, with its verification status restored from the state
+  store and no manual re-entry of credentials, in 100% of cases, provided the
+  out-of-band encryption key is supplied again. Accounts or edits introduced only
+  through a live call since the last start are not expected to survive a restart.
+- **SC-007**: The system never retries a failed verification on its own. When an
+  operator triggers repeated re-checks of one account, the attempts reaching
+  Eetmeter are paced to no more than 6 in any 10-minute window, rather than a
+  continuous stream.
 - **SC-008**: An operator can list all configured accounts and, for each, see its
   status and last-successful-authentication time in a single view.
 
@@ -278,17 +321,22 @@ it disappears from the list and its stored secret is unrecoverable.
   identifier, the system generates and reuses a stable one so that Eetmeter sees
   a consistent device per account.
 - "Fetching the account that is supplied" means authenticating to Eetmeter and
-  confirming the account is reachable; retrieving recipes or any other account
-  content is a separate, later feature.
+  then performing one lightweight authenticated read-back to confirm the session
+  works and the account is reachable; the exact endpoint is fixed by the recorded
+  fixtures (see plan.md and research.md Decision 2). Retrieving recipes or any
+  other account content is a separate, later feature.
 - The initial product serves a single operator whose two Eetmeter accounts will
   later be mirrored. Grouping accounts into a sync relationship, and anything
   about syncing, is out of scope for this feature.
-- Persistent storage is available to the service for account configuration and
-  status.
+- Persistent storage is available to the service for verification status only.
+  Account configuration (including secrets) is not persisted in this feature — it
+  is re-read from the start-up configuration source on every boot.
 - Under normal conditions a single account verification completes within a few
   seconds.
 - Both a declarative start-up configuration path and a live management path are
-  provided, consistent with the project's configuration-precedence rule.
+  provided. The declarative start-up configuration is the durable source of
+  truth; live management changes apply to the running process only and do not
+  survive a restart.
 
 ## Out of Scope
 
