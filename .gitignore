@@ -1,0 +1,25 @@
+# Binaries
+/eetmeter-sync
+/bin/
+*.exe
+*.test
+*.out
+
+# Test & coverage output
+coverage.*
+*.cover
+
+# Secrets and local runtime state (see constitution: Security & Deployment)
+.env
+.env.*
+!.env.example
+*.local
+/data/
+/state/
+/secrets/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
