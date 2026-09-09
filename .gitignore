@@ -24,5 +24,6 @@ coverage.*
 *.swp
 .DS_Store
 
-# Tracked here on purpose, even though it is ignored globally
+# Tracked here on purpose, even though these are ignored globally
 !CLAUDE.md
+!specs/
