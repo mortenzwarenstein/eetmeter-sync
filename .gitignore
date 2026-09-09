@@ -23,3 +23,6 @@ coverage.*
 .vscode/
 *.swp
 .DS_Store
+
+# Tracked here on purpose, even though it is ignored globally
+!CLAUDE.md
