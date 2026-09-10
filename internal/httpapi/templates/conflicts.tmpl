@@ -1,0 +1,42 @@
+{{define "content"}}
+<h1>Conflicts</h1>
+
+{{if not .Conflicts}}
+  <p class="muted">No unresolved conflicts.</p>
+{{else}}
+  {{$labelA := .LabelA}}{{$labelB := .LabelB}}
+  {{range .Conflicts}}
+    <div class="conflict">
+      <h2>{{.Name}}</h2>
+      <p class="muted">detected {{humanTimePtr .DetectedAt}}</p>
+
+      <table>
+        <tr><th>Field</th><th>{{$labelA}}</th><th>{{$labelB}}</th></tr>
+        <tr{{if .Portions.Differs}} class="diff"{{end}}>
+          <td>Portions</td><td>{{.Portions.A}}</td><td>{{.Portions.B}}</td>
+        </tr>
+        {{range .Items}}
+          <tr{{if .Differs}} class="diff"{{end}}>
+            <td>{{.ProductName}}</td>
+            <td{{if .OnlyB}} class="only-b"{{end}}>{{if .OnlyB}}<span class="muted">—</span>{{else}}{{.AAmount}} {{.AUnit}}{{end}}</td>
+            <td{{if .OnlyA}} class="only-a"{{end}}>{{if .OnlyA}}<span class="muted">—</span>{{else}}{{.BAmount}} {{.BUnit}}{{end}}</td>
+          </tr>
+        {{end}}
+      </table>
+
+      {{if .Pending}}
+        <p><strong>Resolved — applies on the next sync</strong> (winner: {{if eq .Pending "a"}}{{$labelA}}{{else}}{{$labelB}}{{end}}).</p>
+      {{end}}
+
+      <form method="post" action="/ui/conflicts/{{.LinkID}}/resolve">
+        <label class="check"><input type="radio" name="winner" value="a" required> {{$labelA}} wins</label>
+        <label class="check"><input type="radio" name="winner" value="b" required> {{$labelB}} wins</label>
+        <div style="margin-top:.6rem">
+          <button type="submit" name="action" value="save">Save</button>
+          <button class="primary" type="submit" name="action" value="save_and_sync">Save &amp; sync now</button>
+        </div>
+      </form>
+    </div>
+  {{end}}
+{{end}}
+{{end}}

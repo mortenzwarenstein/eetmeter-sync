@@ -34,12 +34,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			"GET  /sync/last",
 			"GET  /conflicts",
 			"POST /conflicts/{linkID}/resolve   body {\"winner\":\"a|b\"} or ?winner=a",
+			"GET  /ui              (browser: trigger a sync, resolve conflicts)",
 		},
 	})
 }
 
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
-	runID, startedAt, err := s.engine.Trigger("manual")
+	runID, startedAt, err := s.engine.Trigger("manual", s.defaultDryRun)
 	if errors.Is(err, syncengine.ErrAlreadyRunning) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":     "sync already running",

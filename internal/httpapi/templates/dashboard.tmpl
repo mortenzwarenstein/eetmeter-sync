@@ -1,0 +1,53 @@
+{{define "content"}}
+<h1>eetmeter-sync</h1>
+
+<form class="inline" method="post" action="/ui/sync">
+  <button class="primary" type="submit">Trigger sync</button>
+  <label class="check"><input type="checkbox" name="dryRun" value="1"> Dry run (preview, write nothing)</label>
+</form>
+
+<h2>Last run</h2>
+
+{{if not .HasRun}}
+  <p class="muted">No runs yet. Trigger one above.</p>
+{{else}}
+  {{$s := .Summary}}
+  {{if $s.DryRun}}<span class="dry-run">DRY RUN — this is a preview. Nothing was written to either account.</span>{{end}}
+  <p>
+    {{if eq $s.Result "succeeded"}}<span class="badge ok">succeeded</span>
+    {{else if eq $s.Result "failed"}}<span class="badge fail">failed</span>
+    {{else}}<span class="badge running">running</span>{{end}}
+    <span class="muted">· trigger: {{$s.Trigger}} · run {{$s.RunID}}</span>
+  </p>
+  {{if $s.Error}}<p class="fail">Error: {{$s.Error}}</p>{{end}}
+  <p class="muted">
+    started {{humanTime $s.StartedAt}}{{if $s.FinishedAt}} · finished {{humanTimePtr $s.FinishedAt}}{{end}}
+  </p>
+
+  <table>
+    <tr><th>Per account</th><th>{{.LabelA}}</th><th>{{.LabelB}}</th></tr>
+    <tr><td>Created</td><td>{{$s.Counts.CreatedInA}}</td><td>{{$s.Counts.CreatedInB}}</td></tr>
+    <tr><td>Updated</td><td>{{$s.Counts.UpdatedInA}}</td><td>{{$s.Counts.UpdatedInB}}</td></tr>
+  </table>
+
+  <table>
+    <tr><th>Run totals</th><th></th></tr>
+    <tr><td>Linked</td><td>{{$s.Counts.Linked}}</td></tr>
+    <tr><td>Flagged as conflicts</td><td>{{$s.Counts.FlaggedConflicts}}</td></tr>
+    <tr><td>Resolutions applied</td><td>{{$s.Counts.ResolutionsApplied}}</td></tr>
+    <tr><td>Links retired</td><td>{{$s.Counts.LinksRetired}}</td></tr>
+    <tr><td>Skipped</td><td>{{$s.Counts.Skipped}}</td></tr>
+    <tr><td>No change</td><td>{{$s.Counts.Noop}}</td></tr>
+  </table>
+
+  {{if $s.Items}}
+    <h2>Details</h2>
+    <table>
+      <tr><th>Recipe</th><th>Action</th><th>Note</th></tr>
+      {{range $s.Items}}
+        <tr><td>{{.Name}}</td><td>{{.Action}}</td><td class="muted">{{.Detail}}</td></tr>
+      {{end}}
+    </table>
+  {{end}}
+{{end}}
+{{end}}

@@ -20,9 +20,13 @@ type fakeEngine struct {
 	runID      string
 	startedAt  time.Time
 	triggerErr error
+	triggered  bool
+	gotDryRun  bool
 }
 
-func (f *fakeEngine) Trigger(string) (string, time.Time, error) {
+func (f *fakeEngine) Trigger(_ string, dryRun bool) (string, time.Time, error) {
+	f.gotDryRun = dryRun
+	f.triggered = true
 	if f.triggerErr != nil {
 		return f.runID, f.startedAt, f.triggerErr
 	}
@@ -40,6 +44,7 @@ type fakeStore struct {
 	resolveFound bool
 	resolveErr   error
 	gotWinner    string
+	gotLinkID    int64
 }
 
 func (f *fakeStore) Ping(context.Context) error { return f.pingErr }
@@ -47,13 +52,14 @@ func (f *fakeStore) LatestRunSummary(context.Context) ([]byte, bool, error) {
 	return f.summary, f.summaryOK, nil
 }
 func (f *fakeStore) ListConflicts(context.Context) ([]Conflict, error) { return f.conflicts, nil }
-func (f *fakeStore) RecordResolution(_ context.Context, _ int64, winner string) (bool, error) {
+func (f *fakeStore) RecordResolution(_ context.Context, linkID int64, winner string) (bool, error) {
+	f.gotLinkID = linkID
 	f.gotWinner = winner
 	return f.resolveFound, f.resolveErr
 }
 
 func newTestServer(e Engine, s Store) *Server {
-	return New(e, s, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(e, s, "", false, "a", "b", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func do(t *testing.T, srv *Server, method, path, body string) *httptest.ResponseRecorder {
@@ -198,7 +204,7 @@ func TestResolve(t *testing.T) {
 }
 
 func TestBearerAuth(t *testing.T) {
-	srv := New(&fakeEngine{}, &fakeStore{}, "sekret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv := New(&fakeEngine{}, &fakeStore{}, "sekret", false, "a", "b", slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if w := do(t, srv, "GET", "/healthz", ""); w.Code != 200 {
 		t.Fatalf("healthz should be exempt, got %d", w.Code)

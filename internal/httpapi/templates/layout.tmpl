@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Running}}<meta http-equiv="refresh" content="3">{{end}}
+<title>{{.Title}} · eetmeter-sync</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem;
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 60rem; margin-inline: auto;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+  h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
+  nav { margin-bottom: 1rem; font-size: .9rem; }
+  nav a { margin-right: 1rem; }
+  a { color: inherit; }
+  .flash {
+    padding: .6rem .8rem; border: 1px solid; border-radius: .4rem;
+    margin-bottom: 1rem; background: rgba(127,127,127,.08);
+  }
+  .muted { opacity: .7; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+  th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid rgba(127,127,127,.3); vertical-align: top; }
+  th { font-weight: 600; }
+  form.inline { display: inline; }
+  button {
+    font: inherit; padding: .4rem .8rem; border-radius: .4rem;
+    border: 1px solid rgba(127,127,127,.5); background: rgba(127,127,127,.1); cursor: pointer;
+  }
+  button.primary { border-color: #2563eb; }
+  label.check { display: inline-flex; gap: .4rem; align-items: center; margin-left: .8rem; }
+  .badge {
+    display: inline-block; padding: .15rem .5rem; border-radius: .3rem;
+    font-size: .8rem; font-weight: 600; border: 1px solid;
+  }
+  .badge.ok { border-color: #16a34a; }
+  .badge.fail { border-color: #dc2626; }
+  .badge.running { border-color: #d97706; }
+  .dry-run {
+    display: block; padding: .6rem .8rem; margin: .5rem 0 1rem;
+    border: 2px dashed #d97706; border-radius: .4rem; font-weight: 600;
+  }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .cols > div { border: 1px solid rgba(127,127,127,.3); border-radius: .4rem; padding: .6rem .8rem; }
+  .diff { background: rgba(217,119,6,.18); }
+  .only-a { background: rgba(37,99,235,.15); }
+  .only-b { background: rgba(22,163,74,.15); }
+  .conflict { border: 1px solid rgba(127,127,127,.35); border-radius: .5rem; padding: 1rem; margin: 1rem 0; }
+  input[type=password], input[type=text] {
+    font: inherit; padding: .4rem .6rem; border-radius: .4rem;
+    border: 1px solid rgba(127,127,127,.5); width: 100%;
+  }
+  @media (max-width: 40rem) { .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/ui">Dashboard</a>
+  <a href="/ui/conflicts">Conflicts</a>
+  {{if .Running}}<span class="muted">· a sync is running, this page refreshes…</span>{{end}}
+</nav>
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{template "content" .}}
+</body>
+</html>

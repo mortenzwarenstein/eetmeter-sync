@@ -1,6 +1,7 @@
-// Package httpapi is the small JSON HTTP surface for recipe sync: health, a
-// manual trigger, the latest run summary, and conflict review/resolution. See
-// specs/001-recipe-sync/contracts/http-api.md.
+// Package httpapi is the HTTP surface for recipe sync. It serves a small JSON API
+// (health, a manual trigger, the latest run summary, conflict review/resolution —
+// see specs/001-recipe-sync/contracts/http-api.md) and a minimal server-rendered
+// web UI under /ui (see specs/002-sync-conflict-ui/contracts/ui.md).
 package httpapi
 
 import (
@@ -15,7 +16,7 @@ import (
 
 // Engine is the trigger side the handlers need.
 type Engine interface {
-	Trigger(trigger string) (runID string, startedAt time.Time, err error)
+	Trigger(trigger string, dryRun bool) (runID string, startedAt time.Time, err error)
 	Status() (running bool, runID string, startedAt time.Time)
 }
 
@@ -55,20 +56,39 @@ type Store interface {
 
 // Server holds the router and its dependencies.
 type Server struct {
-	engine Engine
-	store  Store
-	token  string
-	log    *slog.Logger
-	mux    *http.ServeMux
+	engine        Engine
+	store         Store
+	token         string
+	defaultDryRun bool
+	labelA        string
+	labelB        string
+	sessions      *sessionStore
+	log           *slog.Logger
+	mux           *http.ServeMux
 }
 
-// New builds the Server and its routes. token == "" disables auth.
-func New(engine Engine, store Store, token string, log *slog.Logger) *Server {
+// New builds the Server and its routes. token == "" disables auth (the JSON API
+// serves every route open; the /ui pages serve open too). defaultDryRun is the
+// dry-run setting a UI-triggered run inherits when the dry-run box is unchecked,
+// and the setting the JSON POST /sync always uses (SYNC_DRY_RUN). labelA/labelB
+// name the two accounts in the UI.
+func New(engine Engine, store Store, token string, defaultDryRun bool, labelA, labelB string, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{engine: engine, store: store, token: token, log: log, mux: http.NewServeMux()}
+	s := &Server{
+		engine:        engine,
+		store:         store,
+		token:         token,
+		defaultDryRun: defaultDryRun,
+		labelA:        labelA,
+		labelB:        labelB,
+		sessions:      newSessionStore(),
+		log:           log,
+		mux:           http.NewServeMux(),
+	}
 
+	// JSON API (specs/001-recipe-sync/contracts/http-api.md).
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.Handle("GET /", s.protected(http.HandlerFunc(s.handleIndex)))
 	s.mux.Handle("POST /sync", s.protected(http.HandlerFunc(s.handleSync)))
@@ -76,6 +96,16 @@ func New(engine Engine, store Store, token string, log *slog.Logger) *Server {
 	s.mux.Handle("GET /sync/last", s.protected(http.HandlerFunc(s.handleLastRun)))
 	s.mux.Handle("GET /conflicts", s.protected(http.HandlerFunc(s.handleConflicts)))
 	s.mux.Handle("POST /conflicts/{linkID}/resolve", s.protected(http.HandlerFunc(s.handleResolve)))
+
+	// Web UI (specs/002-sync-conflict-ui/contracts/ui.md).
+	s.mux.Handle("GET /ui", s.uiProtected(http.HandlerFunc(s.handleDashboard)))
+	s.mux.Handle("GET /ui/{$}", s.uiProtected(http.HandlerFunc(s.handleDashboard)))
+	s.mux.Handle("POST /ui/sync", s.uiProtected(http.HandlerFunc(s.handleUISync)))
+	s.mux.Handle("GET /ui/conflicts", s.uiProtected(http.HandlerFunc(s.handleUIConflicts)))
+	s.mux.Handle("POST /ui/conflicts/{linkID}/resolve", s.uiProtected(http.HandlerFunc(s.handleUIResolve)))
+	s.mux.HandleFunc("GET /ui/login", s.handleUILoginForm)
+	s.mux.HandleFunc("POST /ui/login", s.handleUILogin)
+	s.mux.HandleFunc("POST /ui/logout", s.handleUILogout)
 	return s
 }
 
@@ -87,6 +117,23 @@ func (s *Server) protected(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.token != "" && r.Header.Get("Authorization") != "Bearer "+s.token {
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// uiProtected gates the /ui pages with a session cookie when a token is
+// configured. With no token the UI is open, mirroring the JSON API.
+func (s *Server) uiProtected(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		c, err := r.Cookie(sessionCookieName)
+		if err != nil || !s.sessions.valid(c.Value) {
+			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)
