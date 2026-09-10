@@ -82,6 +82,25 @@ If `SYNC_API_TOKEN` is set, every route except `/healthz` requires
 
 Full request/response shapes: [`specs/001-recipe-sync/contracts/http-api.md`](specs/001-recipe-sync/contracts/http-api.md).
 
+## Web UI
+
+Open `http://localhost:8080/ui` in a browser for a minimal, no-JavaScript UI:
+
+- **Dashboard** (`/ui`) — trigger a sync (with an optional **Dry run** checkbox)
+  and watch the latest run's per-account summary; the page auto-refreshes while a
+  run is in progress.
+- **Conflicts** (`/ui/conflicts`) — every unresolved conflict with both accounts'
+  current versions side by side and the differences marked; pick a winner and
+  either **Save** (applied on the next sync) or **Save & sync now**.
+
+When `SYNC_API_TOKEN` is set the UI requires a one-field sign-in (the token is
+the secret); the browser stays signed in for 30 days and **Log out** ends it.
+With no token configured the UI is open, like the JSON API. Setting
+`SYNC_DRY_RUN` forces every UI-triggered run to a dry run regardless of the
+checkbox.
+
+Route details: [`specs/002-sync-conflict-ui/contracts/ui.md`](specs/002-sync-conflict-ui/contracts/ui.md).
+
 ## Configuration (environment)
 
 Read from `.env` (parsed literally — `$`, `#`, quotes are safe, no shell
@@ -114,7 +133,8 @@ make check       # gofmt + go vet
 ```
 
 Design docs (spec, plan, data model, contracts, task list) are under
-[`specs/001-recipe-sync/`](specs/001-recipe-sync/).
+[`specs/001-recipe-sync/`](specs/001-recipe-sync/) and
+[`specs/002-sync-conflict-ui/`](specs/002-sync-conflict-ui/).
 
 Layout:
 
