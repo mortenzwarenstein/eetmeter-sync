@@ -1,0 +1,23 @@
+# Local PostgreSQL for development. The app and the fake Eetmeter API run on the
+# host with `make dev` / `make run` (fast iteration, no image rebuilds). To run
+# the app in a container instead, `docker build -t eetmeter-sync . && docker run`.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eetmeter
+      POSTGRES_PASSWORD: eetmeter
+      POSTGRES_DB: eetmeter
+    ports:
+      - "5432:5432"
+    volumes:
+      - eetmeter-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eetmeter"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  eetmeter-pgdata:

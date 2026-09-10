@@ -1,0 +1,15 @@
+.git/
+.gitignore
+.idea/
+.env
+*.local
+bin/
+*.test
+*.out
+*.exe
+specs/
+README.md
+docker-compose.yml
+Makefile
+.dockerignore
+Dockerfile
