@@ -76,11 +76,12 @@ func run() error {
 		}
 	}
 	engine := syncengine.New(st, acct(cfg.AccountA), acct(cfg.AccountB),
-		factory, log, 10*time.Minute, cfg.DryRun)
+		factory, log, 10*time.Minute)
 
 	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(engine, httpapi.NewStore(st), cfg.APIToken, log),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.New(engine, httpapi.NewStore(st), cfg.APIToken, cfg.DryRun,
+			cfg.AccountA.Label, cfg.AccountB.Label, log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -96,13 +97,13 @@ func run() error {
 	// Daily scheduler.
 	hour, min := cfg.DailyRun()
 	sched := scheduler.New(hour, min, cfg.Location(), func(reason string) error {
-		_, _, err := engine.Trigger(reason)
+		_, _, err := engine.Trigger(reason, cfg.DryRun)
 		return err
 	}, log)
 	go sched.Run(ctx)
 
 	if cfg.RunOnStartup {
-		if _, _, err := engine.Trigger("manual"); err != nil {
+		if _, _, err := engine.Trigger("manual", cfg.DryRun); err != nil {
 			log.Warn("startup sync not started", "err", err)
 		}
 	}
