@@ -110,13 +110,7 @@ func newTestEngine(t *testing.T, a, b *fakeAccount) (*Engine, *store.Store) {
 	eng := New(st,
 		AccountConfig{Label: "A", Email: "a@x", Password: "pa"},
 		AccountConfig{Label: "B", Email: "b@x", Password: "pb"},
-		factory, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Minute, false)
-	return eng, st
-}
-
-func newTestEngineDry(t *testing.T, a, b *fakeAccount) (*Engine, *store.Store) {
-	eng, st := newTestEngine(t, a, b)
-	eng.dryRun = true
+		factory, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Minute)
 	return eng, st
 }
 
@@ -129,9 +123,18 @@ func recWith(name string, portions int, amount float64) eetmeter.Recipe {
 
 func run(t *testing.T, eng *Engine) *Summary {
 	t.Helper()
-	sum, err := eng.RunSync(context.Background(), "manual")
+	sum, err := eng.RunSync(context.Background(), "manual", false)
 	if err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	return sum
+}
+
+func runDry(t *testing.T, eng *Engine) *Summary {
+	t.Helper()
+	sum, err := eng.RunSync(context.Background(), "manual", true)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
 	}
 	return sum
 }
@@ -306,9 +309,9 @@ func TestEngine_DeletionRetiresLink(t *testing.T) {
 func TestEngine_DryRun_PreviewsWithoutWriting(t *testing.T) {
 	a := newFakeAccount(recWith("Bami", 4, 300), recWith("Soep", 2, 500))
 	b := newFakeAccount(recWith("Curry", 3, 200))
-	eng, st := newTestEngineDry(t, a, b)
+	eng, st := newTestEngine(t, a, b)
 
-	sum := run(t, eng)
+	sum := runDry(t, eng)
 	if !sum.DryRun {
 		t.Fatal("summary should be marked dryRun")
 	}
@@ -324,7 +327,6 @@ func TestEngine_DryRun_PreviewsWithoutWriting(t *testing.T) {
 	}
 
 	// a real run afterwards still does the work
-	eng.dryRun = false
 	real := run(t, eng)
 	if real.Counts.CreatedInB != 2 || real.Counts.CreatedInA != 1 {
 		t.Fatalf("real run after dry run = %+v", real.Counts)
@@ -350,7 +352,7 @@ func TestEngine_AuthFailureAbortsWithNoWrites(t *testing.T) {
 	b.loginErr = eetmeter.ErrAuth
 	eng, st := newTestEngine(t, a, b)
 
-	sum, err := eng.RunSync(context.Background(), "manual")
+	sum, err := eng.RunSync(context.Background(), "manual", false)
 	if err == nil {
 		t.Fatal("expected a run error")
 	}
@@ -375,7 +377,7 @@ func TestEngine_AlreadyRunning(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	defer eng.end()
-	if _, _, err := eng.Trigger("manual"); !errors.Is(err, ErrAlreadyRunning) {
+	if _, _, err := eng.Trigger("manual", false); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("want ErrAlreadyRunning, got %v", err)
 	}
 }

@@ -51,7 +51,6 @@ type Engine struct {
 	a, b       AccountConfig
 	log        *slog.Logger
 	runTimeout time.Duration
-	dryRun     bool
 
 	mu        sync.Mutex
 	running   bool
@@ -59,17 +58,18 @@ type Engine struct {
 	startedAt time.Time
 }
 
-// New creates an Engine. runTimeout <= 0 defaults to 10 minutes. When dryRun is
-// true every run logs in and computes what it would do but writes nothing — not
-// to Mijn Eetmeter and not to the recipe_link table.
-func New(st *store.Store, a, b AccountConfig, factory ClientFactory, log *slog.Logger, runTimeout time.Duration, dryRun bool) *Engine {
+// New creates an Engine. runTimeout <= 0 defaults to 10 minutes. Whether a run is
+// a dry run (logs in and computes what it would do but writes nothing — not to
+// Mijn Eetmeter and not to the recipe_link table) is decided per run by the
+// dryRun argument to Trigger / RunSync.
+func New(st *store.Store, a, b AccountConfig, factory ClientFactory, log *slog.Logger, runTimeout time.Duration) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
 	if runTimeout <= 0 {
 		runTimeout = 10 * time.Minute
 	}
-	return &Engine{store: st, newClient: factory, a: a, b: b, log: log, runTimeout: runTimeout, dryRun: dryRun}
+	return &Engine{store: st, newClient: factory, a: a, b: b, log: log, runTimeout: runTimeout}
 }
 
 // Status reports whether a run is in progress and, if so, its id and start time.
@@ -98,8 +98,9 @@ func (e *Engine) end() {
 }
 
 // Trigger starts a run in the background and returns its id immediately, or
-// ErrAlreadyRunning (with the in-progress run's id and start time).
-func (e *Engine) Trigger(trigger string) (runID string, startedAt time.Time, err error) {
+// ErrAlreadyRunning (with the in-progress run's id and start time). When dryRun
+// is true the run writes nothing.
+func (e *Engine) Trigger(trigger string, dryRun bool) (runID string, startedAt time.Time, err error) {
 	runID, startedAt, err = e.begin()
 	if err != nil {
 		return runID, startedAt, err
@@ -108,7 +109,7 @@ func (e *Engine) Trigger(trigger string) (runID string, startedAt time.Time, err
 		defer e.end()
 		ctx, cancel := context.WithTimeout(context.Background(), e.runTimeout)
 		defer cancel()
-		if _, err := e.execute(ctx, trigger, runID, startedAt); err != nil {
+		if _, err := e.execute(ctx, trigger, runID, startedAt, dryRun); err != nil {
 			e.log.Error("sync run failed", "runId", runID, "trigger", trigger, "err", err)
 		}
 	}()
@@ -116,19 +117,20 @@ func (e *Engine) Trigger(trigger string) (runID string, startedAt time.Time, err
 }
 
 // RunSync executes a run to completion on the caller's goroutine. Used by tests
-// and anywhere a blocking run is wanted.
-func (e *Engine) RunSync(ctx context.Context, trigger string) (*Summary, error) {
+// and anywhere a blocking run is wanted. When dryRun is true the run writes
+// nothing.
+func (e *Engine) RunSync(ctx context.Context, trigger string, dryRun bool) (*Summary, error) {
 	runID, startedAt, err := e.begin()
 	if err != nil {
 		return nil, err
 	}
 	defer e.end()
-	return e.execute(ctx, trigger, runID, startedAt)
+	return e.execute(ctx, trigger, runID, startedAt, dryRun)
 }
 
-func (e *Engine) execute(ctx context.Context, trigger, runID string, startedAt time.Time) (*Summary, error) {
+func (e *Engine) execute(ctx context.Context, trigger, runID string, startedAt time.Time, dryRun bool) (*Summary, error) {
 	sum := newSummary(runID, trigger, e.a.Label, e.b.Label, startedAt)
-	sum.DryRun = e.dryRun
+	sum.DryRun = dryRun
 
 	if err := e.store.StartRun(ctx, runID, trigger, startedAt); err != nil {
 		return nil, err
@@ -193,7 +195,7 @@ func (e *Engine) execute(ctx context.Context, trigger, runID string, startedAt t
 			AmbiguousA: aDup[name],
 			AmbiguousB: bDup[name],
 		}
-		if err := e.apply(ctx, sum, name, in, Decide(in), clientA, clientB); err != nil {
+		if err := e.apply(ctx, sum, name, in, Decide(in), clientA, clientB, dryRun); err != nil {
 			return fail(fmt.Errorf("recipe %q: %w", name, err))
 		}
 		if err := e.store.SaveRunSummary(ctx, runID, mustJSON(sum)); err != nil {
@@ -207,7 +209,7 @@ func (e *Engine) execute(ctx context.Context, trigger, runID string, startedAt t
 		return sum, err
 	}
 	e.log.Info("sync run finished",
-		"runId", runID, "trigger", trigger, "dryRun", e.dryRun,
+		"runId", runID, "trigger", trigger, "dryRun", dryRun,
 		"createdA", sum.Counts.CreatedInA, "createdB", sum.Counts.CreatedInB,
 		"updatedA", sum.Counts.UpdatedInA, "updatedB", sum.Counts.UpdatedInB,
 		"conflicts", sum.Counts.FlaggedConflicts, "retired", sum.Counts.LinksRetired,
@@ -218,8 +220,8 @@ func (e *Engine) execute(ctx context.Context, trigger, runID string, startedAt t
 // apply performs the store and API effects of one Decision and records a summary
 // item. In dry-run mode it records the item it would have produced and returns
 // without touching Mijn Eetmeter or the store.
-func (e *Engine) apply(ctx context.Context, sum *Summary, name string, in Input, d Decision, ca, cb Client) error {
-	if e.dryRun {
+func (e *Engine) apply(ctx context.Context, sum *Summary, name string, in Input, d Decision, ca, cb Client, dryRun bool) error {
+	if dryRun {
 		if action, detail := plannedAction(d); action != "" {
 			sum.add(name, action, detail)
 		}
