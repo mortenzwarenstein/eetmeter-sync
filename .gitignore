@@ -1,0 +1,14 @@
+# IDE
+/.idea/
+
+# Go build output
+/bin/
+*.exe
+*.test
+*.out
+
+# Local env / secrets
+.env
+*.local
+
+!specs
